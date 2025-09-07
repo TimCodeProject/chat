@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Голосовой чат</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 500px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 28px;
+        }
+
+        .connection-panel {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        input, button {
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        input {
+            flex: 1;
+            min-width: 150px;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: background 0.3s ease;
+            min-width: 120px;
+        }
+
+        button:hover {
+            background: #5a67d8;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .audio-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .audio-controls button {
+            flex: 1;
+            min-width: 120px;
+        }
+
+        .users-list {
+            margin-bottom: 20px;
+        }
+
+        .users-list h3 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        #users {
+            list-style: none;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        #users li {
+            padding: 8px 12px;
+            background: #f8f9fa;
+            margin-bottom: 5px;
+            border-radius: 5px;
+            border-left: 4px solid #667eea;
+        }
+
+        .status {
+            text-align: center;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+
+        #status {
+            color: #666;
+            font-style: italic;
+        }
+
+        .connected {
+            color: #38a169 !important;
+        }
+
+        .recording {
+            color: #e53e3e !important;
+        }
+
+        .error {
+            color: #e53e3e !important;
+            background: #fed7d7 !important;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+
+        .server-select {
+            margin-bottom: 15px;
+        }
+
+        .server-select select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Голосовой чат</h1>
+        
+        <div class="server-select">
+            <select id="serverSelect">
+                <option value="wss://echo.websocket.org">WebSocket Echo Server</option>
+                <option value="wss://ws.postman-echo.com/socket.io">Postman Echo Server</option>
+                <option value="wss://javascript.info/article/websocket/chat/ws">JavaScript.info Chat</option>
+            </select>
+        </div>
+
+        <div class="connection-panel">
+            <input type="text" id="username" placeholder="Введите ваше имя" maxlength="20" value="User1">
+            <button id="connectBtn">Подключиться</button>
+            <button id="disconnectBtn" disabled>Отключиться</button>
+        </div>
+
+        <div class="audio-controls" style="display: none;">
+            <button id="testMicBtn">🎤 Проверить микрофон</button>
+            <button id="muteBtn">🔇 Выключить микрофон</button>
+            <button id="startBtn">▶️ Начать запись</button>
+            <button id="stopBtn" disabled>⏹️ Остановить</button>
+        </div>
+
+        <div class="users-list">
+            <h3>Участники:</h3>
+            <ul id="users">
+                <li>Только локальная демонстрация</li>
+            </ul>
+        </div>
+
+        <div id="errorContainer"></div>
+
+        <div class="status">
+            <span id="status">Не подключено</span>
+        </div>
+
+        <div style="margin-top: 20px; font-size: 12px; color: #666; text-align: center;">
+            <p>⚠️ Это демо-версия. Для работы с другими пользователями нужен собственный WebSocket сервер.</p>
+            <p>Голосовые сообщения воспроизводятся только локально.</p>
+        </div>
+    </div>
+
+    <script>
+        class VoiceChat {
+            constructor() {
+                this.socket = null;
+                this.mediaRecorder = null;
+                this.isRecording = false;
+                this.username = '';
+                this.audioChunks = [];
+                this.mediaStream = null;
+                this.isMuted = false;
+                
+                this.initializeElements();
+                this.setupEventListeners();
+            }
+
+            initializeElements() {
+                this.usernameInput = document.getElementById('username');
+                this.connectBtn = document.getElementById('connectBtn');
+                this.disconnectBtn = document.getElementById('disconnectBtn');
+                this.muteBtn = document.getElementById('muteBtn');
+                this.startBtn = document.getElementById('startBtn');
+                this.stopBtn = document.getElementById('stopBtn');
+                this.testMicBtn = document.getElementById('testMicBtn');
+                this.usersList = document.getElementById('users');
+                this.status = document.getElementById('status');
+                this.errorContainer = document.getElementById('errorContainer');
+                this.serverSelect = document.getElementById('serverSelect');
+                this.audioControls = document.querySelector('.audio-controls');
+            }
+
+            setupEventListeners() {
+                this.connectBtn.addEventListener('click', () => this.connect());
+                this.disconnectBtn.addEventListener('click', () => this.disconnect());
+                this.muteBtn.addEventListener('click', () => this.toggleMute());
+                this.startBtn.addEventListener('click', () => this.startRecording());
+                this.stopBtn.addEventListener('click', () => this.stopRecording());
+                this.testMicBtn.addEventListener('click', () => this.testMicrophone());
+            }
+
+            showError(message) {
+                this.errorContainer.innerHTML = `
+                    <div class="error">
+                        <strong>Ошибка:</strong> ${message}
+                    </div>
+                `;
+            }
+
+            clearError() {
+                this.errorContainer.innerHTML = '';
+            }
+
+            async connect() {
+                this.username = this.usernameInput.value.trim();
+                if (!this.username) {
+                    this.showError('Пожалуйста, введите имя');
+                    return;
+                }
+
+                this.clearError();
+                const serverUrl = this.serverSelect.value;
+
+                try {
+                    this.updateStatus('Подключение к серверу...');
+                    
+                    // Пробуем разные подходы к подключению
+                    try {
+                        this.socket = new WebSocket(serverUrl);
+                    } catch (error) {
+                        this.showError(`Ошибка создания WebSocket: ${error.message}`);
+                        return;
+                    }
+
+                    this.socket.onopen = () => {
+                        this.updateStatus('Подключено к серверу', 'connected');
+                        this.connectBtn.disabled = true;
+                        this.disconnectBtn.disabled = false;
+                        this.audioControls.style.display = 'flex';
+                        
+                        // Запрашиваем доступ к микрофону
+                        this.setupAudio().catch(error => {
+                            this.showError(`Микрофон: ${error.message}`);
+                        });
+                    };
+
+                    this.socket.onmessage = (event) => {
+                        console.log('Получено сообщение:', event.data);
+                        try {
+                            const data = JSON.parse(event.data);
+                            this.handleMessage(data);
+                        } catch {
+                            // Эхо-сервер просто возвращает то, что отправили
+                            this.updateStatus(`Эхо: ${event.data}`);
+                        }
+                    };
+
+                    this.socket.onclose = (event) => {
+                        this.updateStatus(`Отключено (код: ${event.code})`);
+                        this.resetConnection();
+                    };
+
+                    this.socket.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                        this.updateStatus('Ошибка подключения');
+                        this.showError('Не удалось подключиться к WebSocket серверу. Попробуйте другой сервер.');
+                    };
+
+                } catch (error) {
+                    console.error('Connection error:', error);
+                    this.showError('Ошибка подключения: ' + error.message);
+                }
+            }
+
+            disconnect() {
+                if (this.socket) {
+                    this.socket.close();
+                }
+                this.resetConnection();
+                this.updateStatus('Отключено вручную');
+            }
+
+            resetConnection() {
+                this.connectBtn.disabled = false;
+                this.disconnectBtn.disabled = true;
+                this.startBtn.disabled = false;
+                this.stopBtn.disabled = true;
+                this.audioControls.style.display = 'none';
+                this.stopRecording();
+                
+                if (this.mediaStream) {
+                    this.mediaStream.getTracks().forEach(track => track.stop());
+                    this.mediaStream = null;
+                }
+            }
+
+            updateStatus(message, className = '') {
+                this.status.textContent = message;
+                this.status.className = className;
+            }
+
+            handleMessage(data) {
+                // Обработка входящих сообщений
+                if (data.type === 'audio') {
+                    this.playAudio(data.audio);
+                }
+            }
+
+            async setupAudio() {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            channelCount: 1,
+                            sampleRate: 16000
+                        } 
+                    });
+                    
+                    this.mediaStream = stream;
+                    this.setupMediaRecorder(stream);
+                    this.updateStatus('Микрофон готов', 'connected');
+                    
+                } catch (error) {
+                    console.error('Microphone access error:', error);
+                    throw new Error('Не удалось получить доступ к микрофону. Проверьте разрешения.');
+                }
+            }
+
+            async testMicrophone() {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    this.showError('✅ Микрофон работает нормально');
+                    
+                    // Создаем тестовый звук
+                    const audioContext = new AudioContext();
+                    const oscillator = audioContext.createOscillator();
+                    const gainNode = audioContext.createGain();
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioContext.destination);
+                    
+                    oscillator.frequency.value = 440;
+                    gainNode.gain.value = 0.1;
+                    
+                    oscillator.start();
+                    setTimeout(() => {
+                        oscillator.stop();
+                        stream.getTracks().forEach(track => track.stop());
+                    }, 500);
+                    
+                } catch (error) {
+                    this.showError('❌ Ошибка доступа к микрофону: ' + error.message);
+                }
+            }
+
+            setupMediaRecorder(stream) {
+                const options = {
+                    mimeType: 'audio/webm',
+                    audioBitsPerSecond: 128000
+                };
+
+                try {
+                    this.mediaRecorder = new MediaRecorder(stream, options);
+                } catch (e) {
+                    console.warn('MediaRecorder with options failed, using default:', e);
+                    this.mediaRecorder = new MediaRecorder(stream);
+                }
+
+                this.audioChunks = [];
+                
+                this.mediaRecorder.ondataavailable = (event) => {
+                    if (event.data && event.data.size > 0) {
+                        this.audioChunks.push(event.data);
+                    }
+                };
+
+                this.mediaRecorder.onstop = () => {
+                    this.processAudio();
+                };
+            }
+
+            toggleMute() {
+                if (this.mediaStream) {
+                    const audioTracks = this.mediaStream.getAudioTracks();
+                    audioTracks.forEach(track => {
+                        track.enabled = !track.enabled;
+                    });
+                    this.isMuted = !audioTracks[0].enabled;
+                    this.muteBtn.textContent = this.isMuted ? 
+                        '🔊 Включить микрофон' : '🔇 Выключить микрофон';
+                }
+            }
+
+            startRecording() {
+                if (this.mediaRecorder && !this.isRecording) {
+                    this.audioChunks = [];
+                    this.mediaRecorder.start(250); // Записываем chunks по 250ms
+                    this.isRecording = true;
+                    this.startBtn.disabled = true;
+                    this.stopBtn.disabled = false;
+                    this.updateStatus('Запись...', 'recording');
+                }
+            }
+
+            stopRecording() {
+                if (this.mediaRecorder && this.isRecording) {
+                    this.mediaRecorder.stop();
+                    this.isRecording = false;
+                    this.startBtn.disabled = false;
+                    this.stopBtn.disabled = true;
+                    this.updateStatus('Подключено', 'connected');
+                }
+            }
+
+            async processAudio() {
+                if (this.audioChunks.length === 0) return;
+
+                try {
+                    const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
+                    
+                    // Воспроизводим локально
+                    this.playAudio(audioBlob);
+                    
+                    // Пытаемся отправить через WebSocket (если подключены)
+                    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            const base64Data = reader.result.split(',')[1];
+                            this.socket.send(JSON.stringify({
+                                type: 'audio',
+                                username: this.username,
+                                audio: base64Data
+                            }));
+                        };
+                        reader.readAsDataURL(audioBlob);
+                    }
+                    
+                } catch (error) {
+                    console.error('Error processing audio:', error);
+                    this.showError('Ошибка обработки аудио: ' + error.message);
+                }
+            }
+
+            playAudio(audioData) {
+                try {
+                    let audioBlob;
+                    if (audioData instanceof Blob) {
+                        audioBlob = audioData;
+                    } else {
+                        // Если это base64 строка
+                        audioBlob = this.base64ToBlob(audioData, 'audio/webm');
+                    }
+                    
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    const audio = new Audio(audioUrl);
+                    audio.volume = 0.7;
+                    
+                    audio.onended = () => {
+                        URL.revokeObjectURL(audioUrl);
+                    };
+                    
+                    audio.play().catch(error => {
+                        console.error('Audio play error:', error);
+                        this.showError('Ошибка воспроизведения: ' + error.message);
+                    });
+                    
+                } catch (error) {
+                    console.error('Error playing audio:', error);
+                    this.showError('Ошибка воспроизведения аудио');
+                }
+            }
+
+            base64ToBlob(base64, mimeType) {
+                const byteCharacters = atob(base64);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                    byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                return new Blob([byteArray], { type: mimeType });
+            }
+        }
+
+        // Инициализация приложения
+        document.addEventListener('DOMContentLoaded', () => {
+            const voiceChat = new VoiceChat();
+            
+            // Авто-тест микрофона при загрузке
+            setTimeout(() => {
+                voiceChat.testMicrophone().catch(() => {
+                    // Игнорируем ошибки авто-теста
+                });
+            }, 1000);
+        });
+
+        // Глобальная обработка ошибок
+        window.addEventListener('error', (e) => {
+            console.error('Global error:', e.error);
+        });
+    </script>
+</body>
+</html>
